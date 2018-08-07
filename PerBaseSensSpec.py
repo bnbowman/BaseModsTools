@@ -19,30 +19,8 @@ motifStr    = sys.argv[3]
 posStr      = sys.argv[4]
 excludedStr = sys.argv[5] if len(sys.argv) > 5 else None
 
-#print "RefFn", refFn
-#print "DataFn", dataFn
-#print "motifStr", motifStr
-#print "posStr", posStr
-#print "excluded", excludedStr
-
-def _decodeIpd( ip ):
-    if ip <= 64:
-        return ip
-    elif ip > 64 and ip < 128:
-        return 64 + (ip-64) * 2
-    elif ip >= 128 and ip < 192:
-        return 192 + (ip-128) * 4
-    else:
-        return 448 + (ip-192) * 8
-
 def _reverseComplement( string ):
     return string.upper().translate(COMPLEMENT)[::-1]
-
-def _rindex(alist, value):
-    try:
-        return len(alist) - alist[-1::-1].index(value) - 1
-    except:
-        raise ValueError
 
 def _string_to_re( string ):
     # Base  Meaning  Compl.
@@ -93,17 +71,6 @@ def _string_to_re( string ):
                 groups.append( baseStr + "{" + str(ct) + "}" )
     return "".join(groups)
 
-def _qStartToPass( qStarts, qStart ):
-    if qStart == 0:
-        nPass = "First"
-    elif qStarts.index(qStart) == 1:
-        nPass = "Second"
-    elif qStarts.index(qStart) >= 2:
-        nPass = "Third+"
-    else:
-        nPass = "Unknown"
-    return nPass
-
 class Motif( object ):
     """
     Represent a possible methylation motif in a genome
@@ -142,7 +109,7 @@ class MaskedReference( object ):
 
     def __init__( self, rec ):
         self._rec = rec
-        self._mask = ["0"] * len(rec.sequence)
+        self._mask = [0] * len(rec.sequence)
         self._unmaskedRegions = []
         self._regionsNeedUpdate = True
 
@@ -156,7 +123,7 @@ class MaskedReference( object ):
     
     @property
     def sequence(self):
-        return None
+        return ''.join("N" if m==1 else b for b,m in zip(self.rawSequence, self._mask))
 
     @property
     def rawSequence(self):
@@ -168,7 +135,7 @@ class MaskedReference( object ):
     
     @property
     def maskString(self):
-        return "".join(self._mask)
+        return "".join(str(m) for m in self._mask)
     
     @property
     def UnmaskedRegions(self):
@@ -193,7 +160,7 @@ class MaskedReference( object ):
         for start, end, _ in motif.Find( rec.rawSequence ):
             self._regionsNeedUpdate = True
             for p in range(start, end):
-                self.mask[p] = "1"
+                self.mask[p] = 1
 
     def Find(self, motif):
         if self._regionsNeedUpdate:
@@ -205,23 +172,27 @@ class MaskedReference( object ):
                     break
                 if mS >= rS and mE <= rE:
                     unmasked.append( (mS, mE, strand) )
-                    #if strand == 1:
-                    #    print mS, mE, strand, rec.rawSequence[mS:mE]
                     break
         return unmasked
 
 def ReadGffFile( fn ):
+    baseToModType = {'A': 'm6A', 'C': 'm4C', 'G': 'Unknown', 'T': 'Unknown'}
+
     data = {}
     with open(fn) as handle:
         for line in handle:
             if line.startswith("#"):
                 continue
             parts = line.strip().split()
-            #modType = parts[2]
+            modType = parts[2]
             modStrand = 0 if parts[6] == "+" else 1
-            modPos = int(parts[3]) - 1                                          # Adjust because GFF is 1-indexed
-            modQv = int(parts[-1].split('=')[-1]) if "Qv=" in parts[-1] else 0  # Default QV is Zero
-            data[(modPos, modStrand)] = modQv
+            modNotes = parts[-1].split(';')
+            modCtx = modNotes[1].split('=')[-1]
+            modBase = modCtx[20]
+            modType = baseToModType[modBase] if modType == "modified_base" else modType
+            modPos = int(parts[3]) - 1                                             # Adjust because GFF is 1-indexed
+            modQv = int(modNotes[-1].split('=')[-1]) if "Qv=" in parts[-1] else 0  # Default QV is Zero
+            data[(modPos, modStrand)] = (modType, modQv)
     return data
 
 def FilterCalls( calls, maskedRefs ):
@@ -249,90 +220,89 @@ motifs    = [Motif(m) for m in motifStr.split(',')]
 positions = [int(p)-1 for p in posStr.split(',')]
 excluded  = [Motif(m) for m in excludedStr.split(',')] if excludedStr else []
 
-#print "RefFn", refRecs
-#print "DataFn", len(calls), sorted(calls.keys())[:10]
-#print "motifStr", motifs
-#print "posStr", positions
-#print "excluded", excluded
-
 # First we mask any exlcuded regions and tabulate how much is left
 for m in excluded:
     for rec in refRecs:
         rec.MaskRepeat( m )
-totalUnmasked = 2*sum(r.UnmaskedLength for r in refRecs)
 
 # Second we filter down to only the calls in unmasked regions
 filteredCalls = FilterCalls(calls, refRecs)
 
 # Third, we identify our TP and FNs from the filtered call list
-posCalls = set()
-nFail = 0
+posCalls = defaultdict(set)
+nFails   = defaultdict(int)
 for m, p in zip(motifs, positions):
+    if m.String[p] == "A":
+        mType = "m6A"
+    elif m.String[p] == "C":
+        mType = "m4C"
+    else:
+        mType = "Unknown"
+
     currPos, currFail = 0, 0
     for rec in refRecs:
         for mB, mE, mS in sorted(rec.Find( m )):
             if mS == 0:
                 try:
                     c = filteredCalls[(mB+p, mS)]
-                    posCalls.add((mB+p, mS))
+                    posCalls[mType].add((mB+p, mS))
                     currPos += 1
-                    #print mS, mB, p, mB+p, c, refRecs[0].rawSequence[mB:mE]
                 except:
                     currFail += 1
             if mS == 1:
                 try:
                     c = filteredCalls[(mE-p-1, mS)]
-                    posCalls.add((mE-p-1, mS))
+                    posCalls[mType].add((mE-p-1, mS))
                     currPos += 1
-                    #print mS, mE, (-1*p)-1, mE-p-1, c, refRecs[0].rawSequence[mB:mE]
                 except:
                     currFail += 1
-    print m.String, p, currPos, currFail, currPos / float(currPos + currFail)
-    nFail += currFail
+    print m.String, p, mType, currPos, currFail, currPos / float(currPos + currFail)
+    nFails[mType] += currFail
 
-# Fourth, we identify all of our true-negative calls
-negCalls = []
-for key in filteredCalls.iterkeys():
-    if key in posCalls:
-        continue
-    else:
-        negCalls.append( key )
+# Fourth, we identify all of our false-positive calls
+negCalls = defaultdict(list)
+for key, call in filteredCalls.iteritems():
+    isPositive = False
+    for mType, callSet in posCalls.iteritems():
+        if key in posCalls:
+            isPositive = True
+            break
+    if not isPositive:
+        mType, qv = call
+        negCalls[mType].append( key )
 
-# Fifth, we convert our pos/neg calls into Counters, for rapid threshold testing
-posCounts = Counter()
-for key in posCalls:
-    posCounts[filteredCalls[key]] += 1
-## Treat FNs as QV=0 hits
-posCounts[-1] += nFail
+posCounts = defaultdict(Counter)
+for mType, callSet in posCalls.iteritems():
+    for key in callSet:
+        _, qv = filteredCalls[key]
+        posCounts[mType][qv] += 1
+    ## Treat  as QV=-1 hits
+    posCounts[mType][-1] += nFails[mType]
 
-negCounts = Counter()
-for key in negCalls:
-    negCounts[filteredCalls[key]] += 1
-## Treat uncalled TN bases as QV=-1, to differentiate them from called bases
-negCounts[-1] += totalUnmasked - len(filteredCalls) - nFail
+nBases = Counter(refRecs[0].sequence)
+negCounts = defaultdict(Counter)
+for mType, callList in negCalls.iteritems():
+    for key in callList:
+        _, qv = filteredCalls[key]
+        negCounts[mType][qv] += 1
+    ## Treat uncalled bases as QV=-1 calls
+    if mType == "m6A":
+        negCounts[mType][-1] += nBases['A'] - len(posCalls[mType]) - len(callList)
+    elif mType == "m4C":
+        negCounts[mType][-1] += nBases['C'] - len(posCalls[mType]) - len(callList)
+    # NOTE: Figure out how to handle Unknown bases here
+    #else:
+    #    negCounts[mType][-1] += n
 
-qvRange = sorted(list(set(posCounts.keys() + negCounts.keys())))
-
-print
-print totalUnmasked
-print len(calls)
-print len(filteredCalls)
-print len(posCalls)
-print len(negCalls)
-print nFail
-print 
-print posCounts
-print negCounts
-print
-print qvRange
-
-print "MinQv,TP,FN,FP,TN,Sensitivity,Specificity,Accuracy"
-for minQv in qvRange:
-    TP = sum(v for k,v in posCounts.iteritems() if k >= minQv)
-    FN = sum(v for k,v in posCounts.iteritems() if k < minQv)
-    FP = sum(v for k,v in negCounts.iteritems() if k >= minQv)
-    TN = sum(v for k,v in negCounts.iteritems() if k < minQv)
-    sens = round(TP / float(TP + FN), PRECISION)
-    spec = round(TN / float(TN + FP), PRECISION)
-    acc  = round((TP + TN) / float(TP + FN + FP + TN), PRECISION)
-    print "{0},{1},{2},{3},{4},{5},{6},{7}".format(minQv, TP, FN, FP, TN, sens, spec, acc)
+print "ModType,MinQv,TP,FN,FP,TN,Sensitivity,Specificity,Accuracy"
+for mType in posCounts.iterkeys():
+    qvRange = sorted(list(set(posCounts[mType].keys() + negCounts[mType].keys())))
+    for minQv in qvRange:
+        TP = sum(v for k,v in posCounts[mType].iteritems() if k >= minQv)
+        FN = sum(v for k,v in posCounts[mType].iteritems() if k < minQv)
+        FP = sum(v for k,v in negCounts[mType].iteritems() if k >= minQv)
+        TN = sum(v for k,v in negCounts[mType].iteritems() if k < minQv)
+        sens = round(TP / float(TP + FN), PRECISION)
+        spec = round(TN / float(TN + FP), PRECISION)
+        acc  = round((TP + TN) / float(TP + FN + FP + TN), PRECISION)
+        print "{0},{1},{2},{3},{4},{5},{6},{7},{8}".format(mType, minQv, TP, FN, FP, TN, sens, spec, acc)
