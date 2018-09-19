@@ -50,7 +50,7 @@ def _string_to_re( string ):
     #  H   A or C or T   D
     #  D   A or G or T   H
     #  B   C or G or T   V
-        groups = []
+    groups = []
     for base, group in groupby( string):
         ct = len(list(group))
         if base in "ACGT":
@@ -307,7 +307,7 @@ def PrintMotifIpdSums( dataFn, refs, motif, maxMotifs=MAX_COUNT, window=8):
             refBases = clip.reference(aligned=True, orientation="native")
     
             ipds = [ip if ip != 65535 else 0 for ip in clip.IPD(aligned=True, orientation="native")]
-            ipds = [min(_decodeIpd(ip), 952) for ip in ipds]
+            #ipds = [min(_decodeIpd(ip), 952) for ip in ipds]
 
             p = 0
             pos = []

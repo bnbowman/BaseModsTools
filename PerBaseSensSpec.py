@@ -2,178 +2,24 @@
 
 import sys
 import re
-import string
 
 from collections import defaultdict, Counter
 from itertools import groupby
 
 from pbcore.io import *
 
-PRECISION = 6
+from resources.dna import reverseComplement
+from resources.re import reFromString
+from resources.Motif import Motif
+from resources.MaskedReference import MaskedReference
 
-COMPLEMENT = string.maketrans("ACGTMRWSYKVHDBN-", "TGCAKYWSRMBDHVN-")
+PRECISION = 6
 
 refFn       = sys.argv[1]
 dataFn      = sys.argv[2]
 motifStr    = sys.argv[3]
 posStr      = sys.argv[4]
 excludedStr = sys.argv[5] if len(sys.argv) > 5 else None
-
-def _reverseComplement( string ):
-    return string.upper().translate(COMPLEMENT)[::-1]
-
-def _string_to_re( string ):
-    # Base  Meaning  Compl.
-    #  M   A or C        K
-    #  R   A or G        Y
-    #  W   A or T        W
-    #  S   C or G        S
-    #  Y   C or T        R
-    #  K   G or T        M
-    #  V   A or C or G   B
-    #  H   A or C or T   D
-    #  D   A or G or T   H
-    #  B   C or G or T   V
-    groups = []
-    for base, group in groupby( string ):
-        ct = len(list(group))
-        if base in "ACGT":
-            groups.append( base * ct )
-        else:
-            # Convert an ambiguous base to it's components
-            baseStr = base
-            if base == "N":
-                baseStr = "[ACGT]"
-            elif base == "M":
-                baseStr = "[AC]"
-            elif base == "R":
-                baseStr = "[AG]"
-            elif base == "W":
-                baseStr = "[AT]"
-            elif base == "S":
-                baseStr = "[CG]"
-            elif base == "Y":
-                baseStr = "[CT]"
-            elif base == "K":
-                baseStr = "[GT]"
-            elif base == "V":
-                baseStr = "[ACG]"
-            elif base == "H":
-                baseStr = "[ACT]"
-            elif base == "D":
-                baseStr = "[AGT]"
-            elif base == "B":
-                baseStr = "[CGT]"
-            # Convert the ambiguous base components to an RE
-            if ct == 1:
-                groups.append( baseStr )
-            else: 
-                groups.append( baseStr + "{" + str(ct) + "}" )
-    return "".join(groups)
-
-class Motif( object ):
-    """
-    Represent a possible methylation motif in a genome
-    """
-    def __init__( self, arg ):
-        self._string = arg.upper()
-        self._regularExpression = _string_to_re( self.String )
-
-    @property
-    def String(self):
-        return self._string
-
-    @property
-    def regularExpression(self):
-        return self._regularExpression
-    
-    @property
-    def definedPositions(self):
-        return [p+1 for p in range(len(self.String)) if self.String[p] != "N"]
-
-    def Find(self, sequence):
-        length = len(sequence)
-        rc = _reverseComplement(sequence)
-        fwd = [(m.start(), m.end(), 0) for m in re.finditer(self.regularExpression, sequence)]
-        rev = [(length-m.end(), length-m.start(), 1) for m in re.finditer(self.regularExpression, rc)]
-        return fwd + rev
-
-    def __len__(self):
-        return len(self.String)
-
-
-class MaskedReference( object ):
-    """
-    Represent a possibly masked reference
-    """
-
-    def __init__( self, rec ):
-        self._rec = rec
-        self._mask = [0] * len(rec.sequence)
-        self._unmaskedRegions = []
-        self._regionsNeedUpdate = True
-
-    @property
-    def id(self):
-        return self._rec.id
-
-    @property
-    def header(self):
-        return self._rec.header
-    
-    @property
-    def sequence(self):
-        return ''.join("N" if m==1 else b for b,m in zip(self.rawSequence, self._mask))
-
-    @property
-    def rawSequence(self):
-        return self._rec.sequence
-
-    @property
-    def mask(self):
-        return self._mask
-    
-    @property
-    def maskString(self):
-        return "".join(str(m) for m in self._mask)
-    
-    @property
-    def UnmaskedRegions(self):
-        if self._regionsNeedUpdate:
-            self._updateRegions()
-        return self._unmaskedRegions
-
-    @property
-    def UnmaskedLength(self):
-        if self._regionsNeedUpdate:
-            self._updateRegions()
-        return sum(e-s for s,e in self._unmaskedRegions)
-
-    def __len__(self):
-        return len(self.mask)
-
-    def _updateRegions(self):
-        self._unmaskedRegions = [(m.start(), m.end()) for m in re.finditer("0+", self.maskString)]
-        self._regionsNeedUpdate = False
-
-    def MaskRepeat(self, motif):
-        for start, end, _ in motif.Find( rec.rawSequence ):
-            self._regionsNeedUpdate = True
-            for p in range(start, end):
-                self.mask[p] = 1
-
-    def Find(self, motif):
-        if self._regionsNeedUpdate:
-            self._updateRegions()
-        unmasked = []
-        for mS, mE, strand in motif.Find( rec.rawSequence ):
-            for rS, rE in self.UnmaskedRegions:
-                if rS >= mE:
-                    break
-                if mS >= rS and mE <= rE:
-                    unmasked.append( (mS, mE, strand) )
-                    break
-        return unmasked
 
 def ReadGffFile( fn ):
     baseToModType = {'A': 'm6A', 'C': 'm4C', 'G': 'Unknown', 'T': 'Unknown'}
