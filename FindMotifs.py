@@ -81,7 +81,7 @@ def PrintUnmaskedIpds( dataFn, refs, maxPosition=END_POS ):
                     continue
                 if p > maxPosition:
                     break
-                print "{0},{1},{2}".format(nPass, p, r, ip)
+                print "{0},{1},{2},{3}".format(nPass, p, r, ip)
 
 def PrintMotifIpds( dataFn, refs, motif, maxCount=MAX_COUNT ):
     mRegions = [ref.Find(motif) for ref in refs]
