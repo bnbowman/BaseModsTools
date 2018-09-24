@@ -1,5 +1,7 @@
 #! /usr/bin/env python
 
+import re
+
 class MaskedReference( object ):
     """
     Represent a possibly masked reference
@@ -55,7 +57,7 @@ class MaskedReference( object ):
         self._regionsNeedUpdate = False
 
     def MaskRepeat(self, motif):
-        for start, end, _ in motif.Find( rec.rawSequence ):
+        for start, end, _ in motif.Find( self.rawSequence ):
             self._regionsNeedUpdate = True
             for p in range(start, end):
                 self.mask[p] = 1
@@ -64,7 +66,7 @@ class MaskedReference( object ):
         if self._regionsNeedUpdate:
             self._updateRegions()
         unmasked = []
-        for mS, mE, strand in motif.Find( rec.rawSequence ):
+        for mS, mE, strand in motif.Find( self.rawSequence ):
             for rS, rE in self.UnmaskedRegions:
                 if rS >= mE:
                     break
@@ -72,6 +74,3 @@ class MaskedReference( object ):
                     unmasked.append( (mS, mE, strand) )
                     break
         return unmasked
-
-def ReadGffFile( fn ):
-

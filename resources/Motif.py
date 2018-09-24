@@ -1,5 +1,10 @@
 #! /usr/bin/env python
 
+import re
+
+from dna import reverseComplement
+from regex import reFromString
+
 class Motif( object ):
     """
     Represent a possible methylation motif in a genome
@@ -22,7 +27,7 @@ class Motif( object ):
 
     def Find(self, sequence):
         length = len(sequence)
-        rc = _reverseComplement(sequence)
+        rc = reverseComplement(sequence)
         fwd = [(m.start(), m.end(), 0) for m in re.finditer(self.regularExpression, sequence)]
         rev = [(length-m.end(), length-m.start(), 1) for m in re.finditer(self.regularExpression, rc)]
         return fwd + rev
